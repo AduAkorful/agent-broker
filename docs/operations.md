@@ -88,13 +88,12 @@ The server exits with an error if these are missing.
 
 ### Market data / secondary venue
 
-| Variable                         | Default | Description                          |
-| -------------------------------- | ------- | ------------------------------------ |
-| `MARKET_CACHE_MAX_STALE_SECONDS` | `900`   | Hard cap on stale cache serving      |
-| `MCP_CONCURRENCY`                | `5`     | Max concurrent MCP fetches for batch |
-| `SECONDARY_VENUE`                | `bybit` | CCXT exchange id for contrast        |
-| `SECONDARY_VENUE_TIMEOUT_MS`     | `5000`  | CCXT fetch timeout                   |
-| `SECONDARY_VENUE_ENABLED`        | `true`  | Enable/disable CCXT contrast         |
+| Variable                         | Default | Description                             |
+| -------------------------------- | ------- | --------------------------------------- |
+| `MARKET_CACHE_MAX_STALE_SECONDS` | `900`   | Hard cap on stale cache serving         |
+| `MCP_CONCURRENCY`                | `5`     | Max concurrent MCP fetches for batch    |
+| `SECONDARY_VENUE_ENABLED`        | `true`  | Enable/disable Binance futures contrast |
+| `SECONDARY_VENUE_TIMEOUT_MS`     | `5000`  | Fetch timeout for futures book-ticker   |
 
 ## Deployment
 

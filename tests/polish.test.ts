@@ -218,7 +218,7 @@ describe("Polish pack — discovery, ready, openapi, provenance", () => {
   it("paid volatility includes disclaimer + provenance fields", async () => {
     const url = await boot({
       venueContrast: new FakeVenueContrast({
-        venue: "okx",
+        venue: "binance_futures",
         symbol: "BTC/USDT",
         mid: 50005,
         last: 50000,
@@ -249,13 +249,13 @@ describe("Polish pack — discovery, ready, openapi, provenance", () => {
     expect(body.contrast).toBeTruthy();
     const contrast = body.contrast as { available: boolean; venue: string };
     expect(contrast.available).toBe(true);
-    expect(contrast.venue).toBe("okx");
+    expect(contrast.venue).toBe("binance_futures");
   });
 
   it("soft-fails contrast: unavailable contrast does not 500 paid response", async () => {
     const url = await boot({
       venueContrast: new FakeVenueContrast({
-        venue: "okx",
+        venue: "binance_futures",
         symbol: "BTC/USDT",
         mid: null,
         last: null,

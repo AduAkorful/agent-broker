@@ -26,7 +26,7 @@ graph LR
     G --> H[agent.binance.com/mcp/agentic]
     G --> I[CvMS Scorer]
     B --> J[MarketDataCache<br/>TTL + max-stale]
-    B --> K[CCXT Venue Contrast<br/>OKX / Bybit]
+    B --> K[Binance Futures Contrast<br/>spot vs USDT-M basis]
     I --> L[CvMS Score]
     L --> M[ScoreHistoryStore<br/>SQLite]
   end
@@ -50,7 +50,7 @@ graph LR
 | Payments        | x402 V2 / B402 Relayer (EIP-712 `TransferWithAuthorization`) |
 | Facilitator     | B402 facilitator REST (`https://facilitatorv3.b402.ai`)      |
 | Data stores     | SQLite (better-sqlite3) — 5 stores, no external deps         |
-| Secondary venue | ccxt (public markets; soft-fail contrast)                    |
+| Secondary venue | Binance futures (spot vs USDT-M basis; soft-fail contrast)   |
 | OpenAPI serve   | `docs/openapi.yaml` served as YAML + JSON                    |
 | Logging         | consola (structured)                                         |
 | Testing         | Vitest (320+ tests)                                          |
@@ -121,7 +121,7 @@ Each score includes provenance: `sources`, `data_age_ms`, `confidence_score` (fr
 | POST `/market-intelligence/portfolio/risk`    | 0.04 USDT/symbol                |
 | POST `/subscription`                          | 10 USDT for credits (200 / 24h) |
 
-Unauthenticated paid calls receive `402 Payment Required` with a base64 `PAYMENT-REQUIRED` header. Valid payments are verified and settled via the B402 facilitator before intelligence is returned with a base64 `PAYMENT-RESPONSE` header. Paid JSON includes a disclaimer and provenance metadata. Volatility and batch/portfolio responses may include soft-fail multi-venue contrast via CCXT.
+Unauthenticated paid calls receive `402 Payment Required` with a base64 `PAYMENT-REQUIRED` header. Valid payments are verified and settled via the B402 facilitator before intelligence is returned with a base64 `PAYMENT-RESPONSE` header. Paid JSON includes a disclaimer and provenance metadata. Volatility and batch/portfolio responses may include soft-fail secondary-venue contrast via Binance futures basis.
 
 Rate limiting (10 req/min per IP) runs before the 402 challenge. Admin treasury endpoints require `x-api-key` (`ADMIN_API_KEY`).
 
@@ -141,13 +141,12 @@ Purchase via `POST /api/v1/subscription` (real payment only). Response returns `
 
 ## Multi-venue contrast
 
-Binance MCP remains primary. Optional public contrast via CCXT:
+Binance MCP remains primary. Optional secondary-venue contrast via Binance USDT-M futures book-ticker vs spot mid:
 
-| Env                          | Default | Meaning                            |
-| ---------------------------- | ------- | ---------------------------------- |
-| `SECONDARY_VENUE`            | `bybit` | CCXT exchange id (bybit, okx, ...) |
-| `SECONDARY_VENUE_TIMEOUT_MS` | 5000    | Fetch timeout                      |
-| `SECONDARY_VENUE_ENABLED`    | true    | Set false to disable               |
+| Env                          | Default | Meaning                                   |
+| ---------------------------- | ------- | ----------------------------------------- |
+| `SECONDARY_VENUE_ENABLED`    | `true`  | Set false to disable contrast fetches     |
+| `SECONDARY_VENUE_TIMEOUT_MS` | 5000    | Fetch timeout for the futures book-ticker |
 
 Contrast failures are soft: paid Binance-backed responses still succeed; `contrast.available` may be `false` or the field omitted.
 

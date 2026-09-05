@@ -22,7 +22,7 @@ import type { CvmsScore } from "./types.js";
 import { logger } from "./logger.js";
 import { INTEL_DISCLAIMER, withDisclaimer } from "./disclaimer.js";
 import {
-  CcxtVenueContrastClient,
+  BinanceFuturesContrastClient,
   NullVenueContrastClient,
   extractBinanceMid,
   type VenueContrastClient,
@@ -207,9 +207,8 @@ export function createApp(options: CreateAppOptions = {}) {
     options.venueContrast ??
     (isTestRuntime
       ? new NullVenueContrastClient()
-      : new CcxtVenueContrastClient({
+      : new BinanceFuturesContrastClient({
           enabled: SECONDARY_VENUE_CONFIG.enabled,
-          exchangeId: SECONDARY_VENUE_CONFIG.exchangeId,
           timeoutMs: SECONDARY_VENUE_CONFIG.timeoutMs,
         }));
 
@@ -632,8 +631,8 @@ export function createApp(options: CreateAppOptions = {}) {
       },
       secondary_venue: {
         enabled: SECONDARY_VENUE_CONFIG.enabled,
-        exchange: SECONDARY_VENUE_CONFIG.exchangeId,
-        note: "Public mid/last contrast vs Binance primary; omit or mark unavailable on fetch failure",
+        venue: "binance_futures",
+        note: "Binance USDT-M futures book-ticker mid vs spot mid (basis_bps); soft-fails unavailable if fetch fails",
       },
     });
   });

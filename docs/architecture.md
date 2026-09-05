@@ -50,7 +50,7 @@ graph TD
     MCP --> CVMS[CvmsScorer]
     CVMS --> SHS
     MCP --> CACHE[MarketDataCache]
-    BATCH --> VC[CCXT VenueContrast]
+    BATCH --> VC[BinanceFuturesContrastClient]
     PORT --> VC
   end
 
@@ -75,7 +75,7 @@ graph TD
 | MCP client         | Streamable HTTP to Binance MCP (ticker, klines, book, optional OI/funding) | `src/mcp-client.ts`                                    |
 | CVMS scorer        | Volatility, momentum/imbalance, open-interest contribution                 | `src/cvms.ts`                                          |
 | Market cache       | Soft TTL (30s) + hard max-stale age (900s), 100-entry LRU eviction         | `src/market-cache.ts`                                  |
-| Venue contrast     | Optional CCXT mid vs Binance basis                                         | `src/venue-contrast.ts`                                |
+| Venue contrast     | Optional Binance futures mid vs spot basis                                 | `src/venue-contrast.ts`                                |
 | SQLite stores      | Nonces, subscriptions, history, treasury, rate limits                      | `src/payment/*`-store.ts, `src/score-history-store.ts` |
 
 ## Data flow

@@ -1,17 +1,10 @@
 import { logger } from "./logger.js";
 
 export interface VenueContrastConfig {
-  /** Preferred venue id. Only "bybit" is supported for live contrast. */
-  exchangeId: string;
   /** Fetch timeout in ms. */
   timeoutMs: number;
   /** Disable secondary venue contrast entirely. */
   enabled: boolean;
-  /**
-   * Optional Bybit REST base URL override (no trailing slash).
-   * Example: https://api.bytick.com
-   */
-  baseUrl?: string;
 }
 
 export interface VenueContrast {
@@ -30,42 +23,18 @@ export interface VenueContrastClient {
   fetchContrast(symbol: string, binanceMid: number | null): Promise<VenueContrast | null>;
 }
 
-/** Official Bybit public hosts — same venue, different edge (Render 403s some). */
-const BYBIT_BASE_URLS = [
-  process.env.SECONDARY_VENUE_BASE_URL,
-  "https://api.bytick.com",
-  "https://api.bybit.com",
-].filter((u): u is string => typeof u === "string" && u.length > 0);
+/** Binance USDT-M futures base URL for the book ticker endpoint. */
+const FAPI_BASE_URL = "https://fapi.binance.com";
 
 const DEFAULT_CONFIG: VenueContrastConfig = {
-  exchangeId: process.env.SECONDARY_VENUE ?? "bybit",
   timeoutMs: (() => {
     const v = Number(process.env.SECONDARY_VENUE_TIMEOUT_MS);
     return Number.isFinite(v) && v > 0 ? v : 5_000;
   })(),
   enabled: process.env.SECONDARY_VENUE_ENABLED !== "false",
-  baseUrl: process.env.SECONDARY_VENUE_BASE_URL,
 };
 
-function extractMidFromTicker(ticker: {
-  bid?: number | undefined;
-  ask?: number | undefined;
-  last?: number | undefined;
-  close?: number | undefined;
-}): { mid: number | null; last: number | null } {
-  const bid = typeof ticker.bid === "number" && Number.isFinite(ticker.bid) ? ticker.bid : null;
-  const ask = typeof ticker.ask === "number" && Number.isFinite(ticker.ask) ? ticker.ask : null;
-  const last =
-    typeof ticker.last === "number" && Number.isFinite(ticker.last)
-      ? ticker.last
-      : typeof ticker.close === "number" && Number.isFinite(ticker.close)
-        ? ticker.close
-        : null;
-  const mid = bid !== null && ask !== null ? (bid + ask) / 2 : last;
-  return { mid, last };
-}
-
-function toCcxtSymbol(binanceSymbol: string): string {
+function toDisplaySymbol(binanceSymbol: string): string {
   const upper = binanceSymbol.toUpperCase();
   const quotes = ["USDT", "USDC", "BUSD", "USD", "BTC", "ETH", "BNB"];
   for (const quote of quotes) {
@@ -82,74 +51,43 @@ function basisBps(secondaryMid: number | null, binanceMid: number | null): numbe
   return Math.round(((secondaryMid - binanceMid) / binanceMid) * 10_000 * 100) / 100;
 }
 
-function compactSymbol(ccxtSymbol: string): string {
-  return ccxtSymbol.replace("/", "");
-}
-
-function uniqueBases(preferred?: string): string[] {
-  const out: string[] = [];
-  const seen = new Set<string>();
-  for (const raw of [preferred, ...BYBIT_BASE_URLS]) {
-    if (!raw) continue;
-    const base = raw.replace(/\/$/, "");
-    if (seen.has(base)) continue;
-    seen.add(base);
-    out.push(base);
-  }
-  return out;
-}
-
-async function fetchBybitSpotTicker(
-  baseUrl: string,
-  ccxtSymbol: string,
+async function fetchFuturesMid(
+  symbol: string,
   timeoutMs: number,
 ): Promise<{ mid: number | null; last: number | null }> {
-  const url = `${baseUrl}/v5/market/tickers?category=spot&symbol=${compactSymbol(ccxtSymbol)}`;
+  const url = `${FAPI_BASE_URL}/fapi/v1/ticker/bookTicker?symbol=${encodeURIComponent(symbol)}`;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const headers: Record<string, string> = {
-      Accept: "application/json",
-      "User-Agent": "agent-broker/1.0 (+https://github.com/AduAkorful/agent-broker)",
-    };
-    // Free ngrok serves an interstitial HTML page unless this header is set.
-    if (baseUrl.includes("ngrok")) {
-      headers["ngrok-skip-browser-warning"] = "true";
-    }
     const res = await fetch(url, {
       signal: controller.signal,
-      headers,
+      headers: {
+        Accept: "application/json",
+        "User-Agent": "agent-broker/1.0 (+https://github.com/AduAkorful/agent-broker)",
+      },
     });
     if (!res.ok) {
       const body = await res.text().catch(() => "");
-      throw new Error(`${baseUrl} ${res.status} ${res.statusText} ${body.slice(0, 100)}`);
+      throw new Error(`${res.status} ${res.statusText} ${body.slice(0, 100)}`);
     }
-    const raw = (await res.json()) as {
-      retCode?: number;
-      retMsg?: string;
-      result?: { list?: Array<Record<string, string>> };
-    };
-    if (raw.retCode !== 0) {
-      throw new Error(`${baseUrl} retCode=${raw.retCode} ${raw.retMsg ?? ""}`.trim());
-    }
-    const row = raw.result?.list?.[0];
-    if (!row) throw new Error(`${baseUrl} empty ticker list`);
-    return extractMidFromTicker({
-      bid: Number(row.bid1Price),
-      ask: Number(row.ask1Price),
-      last: Number(row.lastPrice),
-    });
+    const row = (await res.json()) as { bidPrice?: string; askPrice?: string; lastPrice?: string };
+    const bid = Number(row.bidPrice);
+    const ask = Number(row.askPrice);
+    const last = Number(row.lastPrice);
+    const mid = Number.isFinite(bid) && Number.isFinite(ask) && bid > 0 && ask > 0 ? (bid + ask) / 2 : null;
+    return { mid, last: Number.isFinite(last) ? last : null };
   } finally {
     clearTimeout(timer);
   }
 }
 
 /**
- * Bybit-only venue contrast via public spot ticker REST.
- * Avoids CCXT loadMarkets (instruments-info), which Render egress 403s.
- * Tries official Bybit hosts only — never substitutes another exchange.
+ * Venue contrast via Binance USDT-M futures order-book midpoint vs the
+ * Binance spot mid supplied by the primary MCP path. Renders a cross-market
+ * basis signal (spot vs perpetual) on the same exchange so contrast works on
+ * Render without third-party proxies or egress-blocked venues.
  */
-export class CcxtVenueContrastClient implements VenueContrastClient {
+export class BinanceFuturesContrastClient implements VenueContrastClient {
   private readonly config: VenueContrastConfig;
 
   constructor(config: Partial<VenueContrastConfig> = {}) {
@@ -159,16 +97,26 @@ export class CcxtVenueContrastClient implements VenueContrastClient {
   async fetchContrast(symbol: string, binanceMid: number | null): Promise<VenueContrast | null> {
     if (!this.config.enabled) return null;
     const fetchedAt = Date.now();
-    const venue = this.config.exchangeId.toLowerCase();
-    const ccxtSymbol = toCcxtSymbol(symbol);
+    const displaySymbol = toDisplaySymbol(symbol);
 
-    if (venue !== "bybit") {
-      logger.warn(
-        `Secondary venue contrast unavailable (${venue}/${ccxtSymbol}): only bybit is supported (got ${venue})`,
-      );
+    try {
+      const { mid } = await fetchFuturesMid(symbol, this.config.timeoutMs);
       return {
-        venue,
-        symbol: ccxtSymbol,
+        venue: "binance_futures",
+        symbol: displaySymbol,
+        mid,
+        last: null,
+        binance_mid: binanceMid,
+        basis_bps: basisBps(mid, binanceMid),
+        available: mid !== null,
+        fetched_at: fetchedAt,
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      logger.warn(`Secondary venue contrast unavailable (binance_futures/${displaySymbol}): ${message.slice(0, 180)}`);
+      return {
+        venue: "binance_futures",
+        symbol: displaySymbol,
         mid: null,
         last: null,
         binance_mid: binanceMid,
@@ -178,39 +126,6 @@ export class CcxtVenueContrastClient implements VenueContrastClient {
         fetched_at: fetchedAt,
       };
     }
-
-    const errors: string[] = [];
-    for (const base of uniqueBases(this.config.baseUrl)) {
-      try {
-        const { mid, last } = await fetchBybitSpotTicker(base, ccxtSymbol, this.config.timeoutMs);
-        return {
-          venue: "bybit",
-          symbol: ccxtSymbol,
-          mid,
-          last,
-          binance_mid: binanceMid,
-          basis_bps: basisBps(mid, binanceMid),
-          available: true,
-          fetched_at: fetchedAt,
-        };
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        errors.push(message.slice(0, 180));
-      }
-    }
-
-    logger.warn(`Secondary venue contrast unavailable (bybit/${ccxtSymbol}): ${errors.join(" | ")}`);
-    return {
-      venue: "bybit",
-      symbol: ccxtSymbol,
-      mid: null,
-      last: null,
-      binance_mid: binanceMid,
-      basis_bps: null,
-      available: false,
-      error: "secondary_venue_unavailable",
-      fetched_at: fetchedAt,
-    };
   }
 }
 

@@ -84,7 +84,7 @@ Machine-readable product catalog. Lists free and paid routes, pricing, network c
   "assets": [{ "symbol": "USDT", ... }, { "symbol": "USDC", ... }],
   "how_to_pay": { "protocol": "B402 / x402 V2", ... },
   "payment": { "payments_enabled": true, "accepts": ["USDT", "USDC"], ... },
-  "secondary_venue": { "enabled": true, "exchange": "okx", ... }
+  "secondary_venue": { "enabled": true, "exchange": "bybit", ... }
 }
 ```
 
@@ -128,7 +128,7 @@ Single-symbol CVMS volatility & momentum score.
   "data_age_ms": 150,
   "confidence_score": 93,
   "age": 150,
-  "contrast": { "venue": "okx", "symbol": "BTC/USDT", "mid": 59842.5, "available": true, ... }
+  "contrast": { "venue": "bybit", "symbol": "BTC/USDT", "mid": 59842.5, "available": true, ... }
 }
 ```
 

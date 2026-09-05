@@ -27,7 +27,7 @@ export interface VenueContrastClient {
 }
 
 const DEFAULT_CONFIG: VenueContrastConfig = {
-  exchangeId: process.env.SECONDARY_VENUE ?? "okx",
+  exchangeId: process.env.SECONDARY_VENUE ?? "bybit",
   timeoutMs: (() => {
     const v = Number(process.env.SECONDARY_VENUE_TIMEOUT_MS);
     return Number.isFinite(v) && v > 0 ? v : 5_000;

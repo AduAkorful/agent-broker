@@ -145,7 +145,7 @@ Binance MCP remains primary. Optional public contrast via CCXT:
 
 | Env                          | Default | Meaning                            |
 | ---------------------------- | ------- | ---------------------------------- |
-| `SECONDARY_VENUE`            | `okx`   | CCXT exchange id (okx, bybit, ...) |
+| `SECONDARY_VENUE`            | `bybit` | CCXT exchange id (bybit, okx, ...) |
 | `SECONDARY_VENUE_TIMEOUT_MS` | 5000    | Fetch timeout                      |
 | `SECONDARY_VENUE_ENABLED`    | true    | Set false to disable               |
 

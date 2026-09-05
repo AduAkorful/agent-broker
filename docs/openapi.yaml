@@ -19,6 +19,8 @@ info:
         then reports `payments_enabled: false` and zero prices.
   version: "1.0.0"
 servers:
+  - url: /
+    description: This deployment (same origin as /docs)
   - url: http://localhost:3000
     description: Local broker (development)
   - url: http://127.0.0.1:3000

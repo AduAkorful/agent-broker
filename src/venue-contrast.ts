@@ -70,6 +70,119 @@ function basisBps(secondaryMid: number | null, binanceMid: number | null): numbe
   return Math.round(((secondaryMid - binanceMid) / binanceMid) * 10_000 * 100) / 100;
 }
 
+function compactSymbol(ccxtSymbol: string): string {
+  return ccxtSymbol.replace("/", "");
+}
+
+function okxInstId(ccxtSymbol: string): string {
+  return ccxtSymbol.replace("/", "-");
+}
+
+async function fetchJson(url: string, timeoutMs: number): Promise<unknown> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, {
+      signal: controller.signal,
+      headers: {
+        Accept: "application/json",
+        "User-Agent": "agent-broker-venue-contrast/1.0",
+      },
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      throw new Error(`${res.status} ${res.statusText} ${body.slice(0, 120)}`);
+    }
+    return await res.json();
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Direct spot ticker — skips CCXT loadMarkets (blocked on some cloud egress). */
+async function fetchSpotTickerRest(
+  venue: string,
+  ccxtSymbol: string,
+  timeoutMs: number,
+): Promise<{ mid: number | null; last: number | null } | null> {
+  if (venue === "bybit") {
+    const url = `https://api.bybit.com/v5/market/tickers?category=spot&symbol=${compactSymbol(ccxtSymbol)}`;
+    const raw = (await fetchJson(url, timeoutMs)) as {
+      retCode?: number;
+      retMsg?: string;
+      result?: { list?: Array<Record<string, string>> };
+    };
+    if (raw.retCode !== 0) {
+      throw new Error(`bybit retCode=${raw.retCode} ${raw.retMsg ?? ""}`.trim());
+    }
+    const row = raw.result?.list?.[0];
+    if (!row) throw new Error("bybit empty ticker list");
+    const bid = Number(row.bid1Price);
+    const ask = Number(row.ask1Price);
+    const last = Number(row.lastPrice);
+    return extractMidFromTicker({
+      bid: Number.isFinite(bid) ? bid : undefined,
+      ask: Number.isFinite(ask) ? ask : undefined,
+      last: Number.isFinite(last) ? last : undefined,
+    });
+  }
+  if (venue === "okx") {
+    const url = `https://www.okx.com/api/v5/market/ticker?instId=${okxInstId(ccxtSymbol)}`;
+    const raw = (await fetchJson(url, timeoutMs)) as {
+      code?: string;
+      msg?: string;
+      data?: Array<Record<string, string>>;
+    };
+    if (raw.code !== "0") {
+      throw new Error(`okx code=${raw.code} ${raw.msg ?? ""}`.trim());
+    }
+    const row = raw.data?.[0];
+    if (!row) throw new Error("okx empty ticker data");
+    const bid = Number(row.bidPx);
+    const ask = Number(row.askPx);
+    const last = Number(row.last);
+    return extractMidFromTicker({
+      bid: Number.isFinite(bid) ? bid : undefined,
+      ask: Number.isFinite(ask) ? ask : undefined,
+      last: Number.isFinite(last) ? last : undefined,
+    });
+  }
+  return null;
+}
+
+function ensureSpotMarket(exchange: Exchange, symbol: string): void {
+  if (exchange.markets?.[symbol]) return;
+  const [base, quote] = symbol.split("/");
+  if (!base || !quote) return;
+  const id = `${base}${quote}`;
+  const market = {
+    id,
+    symbol,
+    base,
+    quote,
+    baseId: base,
+    quoteId: quote,
+    active: true,
+    type: "spot",
+    spot: true,
+    margin: false,
+    swap: false,
+    future: false,
+    option: false,
+    contract: false,
+    precision: { amount: 8, price: 8 },
+    limits: { amount: {}, price: {}, cost: {}, leverage: {} },
+    info: {},
+  } as Exchange["markets"] extends Record<string, infer M> ? M : never;
+  exchange.markets = { ...(exchange.markets ?? {}), [symbol]: market };
+  const byId = (exchange.markets_by_id ?? {}) as Record<string, unknown>;
+  byId[id] = [market];
+  exchange.markets_by_id = byId as Exchange["markets_by_id"];
+  exchange.symbols = Object.keys(exchange.markets);
+  // Skip remote instruments load (403 on Render for Bybit/OKX).
+  exchange.loadMarkets = async () => exchange.markets!;
+}
+
 export class CcxtVenueContrastClient implements VenueContrastClient {
   private exchange: Exchange | null = null;
   private readonly config: VenueContrastConfig;
@@ -89,6 +202,7 @@ export class CcxtVenueContrastClient implements VenueContrastClient {
     this.exchange = new Factory({
       enableRateLimit: true,
       timeout: this.config.timeoutMs,
+      options: { defaultType: "spot" },
     });
     return this.exchange;
   }
@@ -99,9 +213,17 @@ export class CcxtVenueContrastClient implements VenueContrastClient {
     const venue = this.config.exchangeId.toLowerCase();
     const ccxtSymbol = toCcxtSymbol(symbol);
     try {
-      const exchange = this.getExchange();
-      const ticker = await exchange.fetchTicker(ccxtSymbol);
-      const { mid, last } = extractMidFromTicker(ticker);
+      const rest = await fetchSpotTickerRest(venue, ccxtSymbol, this.config.timeoutMs);
+      let mid: number | null;
+      let last: number | null;
+      if (rest) {
+        ({ mid, last } = rest);
+      } else {
+        const exchange = this.getExchange();
+        ensureSpotMarket(exchange, ccxtSymbol);
+        const ticker = await exchange.fetchTicker(ccxtSymbol);
+        ({ mid, last } = extractMidFromTicker(ticker));
+      }
       return {
         venue,
         symbol: ccxtSymbol,

@@ -108,12 +108,17 @@ async function fetchBybitSpotTicker(
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
+    const headers: Record<string, string> = {
+      Accept: "application/json",
+      "User-Agent": "agent-broker/1.0 (+https://github.com/AduAkorful/agent-broker)",
+    };
+    // Free ngrok serves an interstitial HTML page unless this header is set.
+    if (baseUrl.includes("ngrok")) {
+      headers["ngrok-skip-browser-warning"] = "true";
+    }
     const res = await fetch(url, {
       signal: controller.signal,
-      headers: {
-        Accept: "application/json",
-        "User-Agent": "agent-broker/1.0 (+https://github.com/AduAkorful/agent-broker)",
-      },
+      headers,
     });
     if (!res.ok) {
       const body = await res.text().catch(() => "");

@@ -17,7 +17,7 @@ services:
       - key: SECONDARY_VENUE
         value: bybit
       - key: SECONDARY_VENUE_BASE_URL
-        value: https://agent-broker-bybit-proxy.jeffquaye36.workers.dev
+        value: https://5738-154-162-62-127.ngrok-free.app
       - key: ADMIN_API_KEY
         sync: false
       - key: BINANCE_MCP_AUTH_TOKEN

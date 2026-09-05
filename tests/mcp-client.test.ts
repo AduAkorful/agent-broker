@@ -277,13 +277,46 @@ describe("BinanceMcpClient", () => {
       return true;
     });
   });
+
+  it("resolves futures order-book midpoint via MCP relay futures_depth", async () => {
+    const fake = new FakeMcpClient([{ name: "futures_depth" }], {
+      futures_depth: {
+        structuredContent: {
+          bids: [
+            ["51000", "2"],
+            ["50999", "1"],
+          ],
+          asks: [["51010", "3"]],
+        },
+      },
+    });
+    const client = new BinanceMcpClient({ clientFactory: () => fake, requestTimeoutMs: 1000 });
+    const mid = await client.getFuturesMid("BTCUSDT", 2000);
+    expect(mid).toBe(51005);
+    expect(fake.calls).toEqual(expect.arrayContaining([{ name: "futures_depth", arguments: { symbol: "BTCUSDT" } }]));
+  });
+
+  it("returns null when no futures order-book tool is available", async () => {
+    const fake = new FakeMcpClient([{ name: "spot_ticker" }], {});
+    const client = new BinanceMcpClient({ clientFactory: () => fake, requestTimeoutMs: 1000 });
+    expect(await client.getFuturesMid("BTCUSDT", 1000)).toBeNull();
+  });
+
+  it("returns null when the futures order-book call fails", async () => {
+    const fake = new FakeMcpClient([{ name: "futures_depth" }], { futures_depth: { isError: true } });
+    const client = new BinanceMcpClient({ clientFactory: () => fake, requestTimeoutMs: 1000 });
+    expect(await client.getFuturesMid("BTCUSDT", 1000)).toBeNull();
+  });
 });
 
 describe("mcp-client helpers", () => {
   it("merges discovered tools by name without dropping always-exposed tools", () => {
     const merged = mergeTools(
       [{ name: "tool_search" }, { name: "futures_ticker" }],
-      [{ name: "spot.ticker", description: "Spot ticker" }, { name: "futures_ticker", description: "updated" }],
+      [
+        { name: "spot.ticker", description: "Spot ticker" },
+        { name: "futures_ticker", description: "updated" },
+      ],
     );
     expect(merged.map((tool) => tool.name)).toEqual(["tool_search", "futures_ticker", "spot.ticker"]);
     expect(merged.find((tool) => tool.name === "futures_ticker")?.description).toBe("updated");

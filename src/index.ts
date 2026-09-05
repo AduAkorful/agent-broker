@@ -207,10 +207,13 @@ export function createApp(options: CreateAppOptions = {}) {
     options.venueContrast ??
     (isTestRuntime
       ? new NullVenueContrastClient()
-      : new BinanceFuturesContrastClient({
-          enabled: SECONDARY_VENUE_CONFIG.enabled,
-          timeoutMs: SECONDARY_VENUE_CONFIG.timeoutMs,
-        }));
+      : new BinanceFuturesContrastClient(
+          {
+            enabled: SECONDARY_VENUE_CONFIG.enabled,
+            timeoutMs: SECONDARY_VENUE_CONFIG.timeoutMs,
+          },
+          client,
+        ));
 
   const app = express();
   app.set("trust proxy", trustProxy);

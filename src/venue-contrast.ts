@@ -1,4 +1,5 @@
 import { logger } from "./logger.js";
+import type { FuturesMidSource } from "./types.js";
 
 export interface VenueContrastConfig {
   /** Fetch timeout in ms. */
@@ -22,9 +23,6 @@ export interface VenueContrast {
 export interface VenueContrastClient {
   fetchContrast(symbol: string, binanceMid: number | null): Promise<VenueContrast | null>;
 }
-
-/** Binance USDT-M futures base URL for the book ticker endpoint. */
-const FAPI_BASE_URL = "https://fapi.binance.com";
 
 const DEFAULT_CONFIG: VenueContrastConfig = {
   timeoutMs: (() => {
@@ -51,47 +49,26 @@ function basisBps(secondaryMid: number | null, binanceMid: number | null): numbe
   return Math.round(((secondaryMid - binanceMid) / binanceMid) * 10_000 * 100) / 100;
 }
 
-async function fetchFuturesMid(
-  symbol: string,
-  timeoutMs: number,
-): Promise<{ mid: number | null; last: number | null }> {
-  const url = `${FAPI_BASE_URL}/fapi/v1/ticker/bookTicker?symbol=${encodeURIComponent(symbol)}`;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const res = await fetch(url, {
-      signal: controller.signal,
-      headers: {
-        Accept: "application/json",
-        "User-Agent": "agent-broker/1.0 (+https://github.com/AduAkorful/agent-broker)",
-      },
-    });
-    if (!res.ok) {
-      const body = await res.text().catch(() => "");
-      throw new Error(`${res.status} ${res.statusText} ${body.slice(0, 100)}`);
-    }
-    const row = (await res.json()) as { bidPrice?: string; askPrice?: string; lastPrice?: string };
-    const bid = Number(row.bidPrice);
-    const ask = Number(row.askPrice);
-    const last = Number(row.lastPrice);
-    const mid = Number.isFinite(bid) && Number.isFinite(ask) && bid > 0 && ask > 0 ? (bid + ask) / 2 : null;
-    return { mid, last: Number.isFinite(last) ? last : null };
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
 /**
- * Venue contrast via Binance USDT-M futures order-book midpoint vs the
- * Binance spot mid supplied by the primary MCP path. Renders a cross-market
- * basis signal (spot vs perpetual) on the same exchange so contrast works on
- * Render without third-party proxies or egress-blocked venues.
+ * Venue contrast: Binance spot (primary, via MCP) vs Binance USDT-M futures
+ * (secondary, via the MCP relay's futures order-book tool). Computing the
+ * basis on the same exchange/venue family gives a clean cross-market signal,
+ * and because both legs ride the reachable `agent.binance.com` MCP relay, no
+ * direct exchange REST egress (e.g. `fapi.binance.com`) is required — which
+ * matters on networks such as Render where that host is blocked.
+ *
+ * The futures mid is resolved through a `FuturesMidSource` (the primary
+ * BinanceMcpClient in production). If the source is unavailable, returns
+ * `null` (no futures tool / call failed), the contrast soft-fails and the
+ * paid/free intelligence path is unaffected.
  */
 export class BinanceFuturesContrastClient implements VenueContrastClient {
   private readonly config: VenueContrastConfig;
+  private readonly futuresSource?: FuturesMidSource;
 
-  constructor(config: Partial<VenueContrastConfig> = {}) {
+  constructor(config: Partial<VenueContrastConfig> = {}, futuresSource?: FuturesMidSource) {
     this.config = { ...DEFAULT_CONFIG, ...config };
+    this.futuresSource = futuresSource;
   }
 
   async fetchContrast(symbol: string, binanceMid: number | null): Promise<VenueContrast | null> {
@@ -99,18 +76,12 @@ export class BinanceFuturesContrastClient implements VenueContrastClient {
     const fetchedAt = Date.now();
     const displaySymbol = toDisplaySymbol(symbol);
 
+    let futuresMid: number | null;
     try {
-      const { mid } = await fetchFuturesMid(symbol, this.config.timeoutMs);
-      return {
-        venue: "binance_futures",
-        symbol: displaySymbol,
-        mid,
-        last: null,
-        binance_mid: binanceMid,
-        basis_bps: basisBps(mid, binanceMid),
-        available: mid !== null,
-        fetched_at: fetchedAt,
-      };
+      if (!this.futuresSource) {
+        throw new Error("no futures mid source configured");
+      }
+      futuresMid = await this.futuresSource.getFuturesMid(symbol, this.config.timeoutMs);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       logger.warn(`Secondary venue contrast unavailable (binance_futures/${displaySymbol}): ${message.slice(0, 180)}`);
@@ -126,6 +97,17 @@ export class BinanceFuturesContrastClient implements VenueContrastClient {
         fetched_at: fetchedAt,
       };
     }
+
+    return {
+      venue: "binance_futures",
+      symbol: displaySymbol,
+      mid: futuresMid,
+      last: null,
+      binance_mid: binanceMid,
+      basis_bps: basisBps(futuresMid, binanceMid),
+      available: futuresMid !== null,
+      fetched_at: fetchedAt,
+    };
   }
 }
 

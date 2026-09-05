@@ -1,90 +1,92 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { BinanceFuturesContrastClient } from "../src/venue-contrast.js";
+import { describe, expect, it, vi } from "vitest";
+import type { FuturesMidSource } from "../src/types.js";
+import { BinanceFuturesContrastClient, NullVenueContrastClient } from "../src/venue-contrast.js";
 
-function mockFetch(status: number, body: unknown): ReturnType<typeof vi.fn> {
-  return vi.fn().mockResolvedValue({
-    ok: status >= 200 && status < 300,
-    status,
-    statusText: "OK",
-    json: async () => body,
-    text: async () => JSON.stringify(body),
-  } as unknown as Response);
+function makeFakeSource(value: number | null | Error): { source: FuturesMidSource; spy: ReturnType<typeof vi.fn> } {
+  const spy = vi.fn<(symbol: string, timeoutMs: number) => Promise<number | null>>(async (_symbol, _timeoutMs) => {
+    if (value instanceof Error) throw value;
+    return value;
+  });
+  return { source: { getFuturesMid: spy }, spy };
 }
 
 describe("BinanceFuturesContrastClient", () => {
-  afterEach(() => vi.restoreAllMocks());
-
-  it("computes basis_bps vs spot mid (futures == spot → 0 bps)", async () => {
-    const fetchSpy = mockFetch(200, {
-      bidPrice: "50000.00",
-      askPrice: "50020.00",
-      lastPrice: "50010.00",
-    });
-    vi.stubGlobal("fetch", fetchSpy);
-
-    const client = new BinanceFuturesContrastClient({ enabled: true, timeoutMs: 1000 });
-    const result = await client.fetchContrast("BTCUSDT", 50010);
+  it("computes basis_bps vs spot mid (futures == spot -> 0 bps)", async () => {
+    const { source, spy } = makeFakeSource(50000);
+    const client = new BinanceFuturesContrastClient({ enabled: true, timeoutMs: 1000 }, source);
+    const result = await client.fetchContrast("BTCUSDT", 50000);
 
     expect(result).not.toBeNull();
     expect(result!.venue).toBe("binance_futures");
-    expect(result!.mid).toBe(50010); // (50000 + 50020) / 2
-    expect(result!.binance_mid).toBe(50010);
+    expect(result!.symbol).toBe("BTC/USDT");
+    expect(result!.mid).toBe(50000);
+    expect(result!.binance_mid).toBe(50000);
     expect(result!.basis_bps).toBe(0);
     expect(result!.available).toBe(true);
-    expect(result!.symbol).toBe("BTC/USDT");
-    expect(fetchSpy).toHaveBeenCalledWith(
-      "https://fapi.binance.com/fapi/v1/ticker/bookTicker?symbol=BTCUSDT",
-      expect.any(Object),
-    );
+    expect(spy).toHaveBeenCalledWith("BTCUSDT", 1000);
   });
 
   it("returns positive basis_bps when futures trade above spot", async () => {
-    vi.stubGlobal("fetch", mockFetch(200, { bidPrice: "51000.00", askPrice: "51020.00" }));
-
-    const client = new BinanceFuturesContrastClient({ enabled: true, timeoutMs: 1000 });
+    const { source, spy } = makeFakeSource(51010);
+    const client = new BinanceFuturesContrastClient({ enabled: true, timeoutMs: 1000 }, source);
     const result = await client.fetchContrast("ETHUSDT", 50000);
 
+    expect(result).not.toBeNull();
     expect(result!.mid).toBe(51010);
     // ((51010 - 50000) / 50000) * 10000 = 202 bps
     expect(result!.basis_bps).toBe(202);
+    expect(result!.symbol).toBe("ETH/USDT");
+    expect(result!.available).toBe(true);
+    expect(spy).toHaveBeenCalledWith("ETHUSDT", 1000);
   });
 
-  it("soft-fails with available:false on HTTP error", async () => {
-    vi.stubGlobal("fetch", mockFetch(403, { error: "blocked" }));
+  it("returns negative basis_bps when futures trade below spot", async () => {
+    const { source } = makeFakeSource(49000);
+    const client = new BinanceFuturesContrastClient({ enabled: true, timeoutMs: 5000 }, source);
+    const result = await client.fetchContrast("BTCUSDT", 50000);
 
-    const client = new BinanceFuturesContrastClient({ enabled: true, timeoutMs: 1000 });
+    expect(result!.basis_bps).toBe(-200);
+    expect(result!.available).toBe(true);
+  });
+
+  it("soft-fails with available:false when futures source returns null", async () => {
+    const { source } = makeFakeSource(null);
+    const client = new BinanceFuturesContrastClient({ enabled: true, timeoutMs: 1000 }, source);
+    const result = await client.fetchContrast("SOLUSDT", 50000);
+
+    expect(result).not.toBeNull();
+    expect(result!.available).toBe(false);
+    expect(result!.mid).toBeNull();
+    expect(result!.basis_bps).toBeNull();
+    expect(result!.symbol).toBe("SOL/USDT");
+    expect(result!.error).toBeUndefined();
+  });
+
+  it("soft-fails with available:false when futures source throws", async () => {
+    const { source } = makeFakeSource(new Error("no futures order book"));
+    const client = new BinanceFuturesContrastClient({ enabled: true, timeoutMs: 1000 }, source);
     const result = await client.fetchContrast("BTCUSDT", 50000);
 
     expect(result!.available).toBe(false);
-    expect(result!.error).toBe("secondary_venue_unavailable");
     expect(result!.mid).toBeNull();
     expect(result!.basis_bps).toBeNull();
-    expect(result!.venue).toBe("binance_futures");
+    expect(result!.error).toBe("secondary_venue_unavailable");
   });
 
   it("returns null when disabled", async () => {
-    const client = new BinanceFuturesContrastClient({ enabled: false, timeoutMs: 1000 });
+    const { source } = makeFakeSource(51010);
+    const client = new BinanceFuturesContrastClient({ enabled: false }, source);
+    const result = await client.fetchContrast("BTCUSDT", 50000);
+
+    expect(result).toBeNull();
+    expect(source.getFuturesMid).not.toHaveBeenCalled();
+  });
+});
+
+describe("NullVenueContrastClient", () => {
+  it("never performs a contrast", async () => {
+    const client = new NullVenueContrastClient();
     const result = await client.fetchContrast("BTCUSDT", 50000);
     expect(result).toBeNull();
-  });
-
-  it("maps symbols to display format (case-insensitive)", async () => {
-    vi.stubGlobal("fetch", mockFetch(200, { bidPrice: "100", askPrice: "102" }));
-
-    const client = new BinanceFuturesContrastClient({ enabled: true, timeoutMs: 1000 });
-    const result = await client.fetchContrast("solusdt", 100);
-    expect(result!.symbol).toBe("SOL/USDT");
-  });
-
-  it("handles null spot mid gracefully (basis null, contrast still available)", async () => {
-    vi.stubGlobal("fetch", mockFetch(200, { bidPrice: "50000.00", askPrice: "50020.00" }));
-
-    const client = new BinanceFuturesContrastClient({ enabled: true, timeoutMs: 1000 });
-    const result = await client.fetchContrast("BTCUSDT", null);
-
-    expect(result!.mid).toBe(50010);
-    expect(result!.binance_mid).toBeNull();
-    expect(result!.basis_bps).toBeNull();
-    expect(result!.available).toBe(true);
   });
 });

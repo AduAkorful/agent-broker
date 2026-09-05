@@ -21,6 +21,16 @@ export interface McpClientLike {
   setDisconnectHandler?(handler: () => void): void;
 }
 
+/**
+ * Minimal source for the Binance USDT-M futures order-book midpoint, fetched
+ * through the MCP relay (agent.binance.com) so no direct exchange REST egress is
+ * required. The contrast path is the sole consumer of this.
+ */
+export interface FuturesMidSource {
+  /** Resolves the futures best-bid/ask midpoint, or `null` when unavailable. */
+  getFuturesMid(symbol: string, timeoutMs: number): Promise<number | null>;
+}
+
 export interface Candle {
   openTime: number;
   open: number;

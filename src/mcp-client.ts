@@ -85,7 +85,8 @@ export function parseToolSearchPayload(payload: unknown): { tools: McpTool[]; ne
     });
   }
 
-  const nextCursor = typeof record.nextCursor === "string" && record.nextCursor.trim() !== "" ? record.nextCursor : undefined;
+  const nextCursor =
+    typeof record.nextCursor === "string" && record.nextCursor.trim() !== "" ? record.nextCursor : undefined;
   return { tools, ...(nextCursor ? { nextCursor } : {}) };
 }
 
@@ -514,14 +515,53 @@ export class BinanceMcpClient {
     return this.withTimeout(this.client.callTool({ name: tool.name, arguments: args }), `call ${tool.name}`);
   }
 
-  private async withTimeout<T>(promise: Promise<T>, operation: string): Promise<T> {
+  /**
+   * Futures order-book midpoint via the MCP relay (agent.binance.com), used for
+   * the spot-vs-futures venue contrast. Looks up a Binance futures order-book
+   * tool (e.g. `futures_depth` / `binance.futures.depth`) by name so that no
+   * direct `fapi.binance.com` REST egress is required. Returns `null` when no
+   * such tool exists or the call fails.
+   */
+  async getFuturesMid(symbol: string, timeoutMs: number): Promise<number | null> {
+    if (!/^[A-Za-z0-9]{3,20}$/.test(symbol)) return null;
+    if (!this.connected) await this.connect();
+    await this.ensureMarketToolsDiscovered();
+
+    const tool = this.tools
+      .filter((t) => /(futures|perp|derivatives?)/i.test(t.name))
+      .filter((t) => /(order[_-]?book|depth)/i.test(t.name))
+      .sort((a, b) => toolScore(b, "orderBook") - toolScore(a, "orderBook"))[0];
+    if (!tool) return null;
+
+    try {
+      const result = await this.withTimeout(
+        this.client.callTool({ name: tool.name, arguments: { symbol } }),
+        `fetch futures order book for ${symbol}`,
+        timeoutMs,
+      );
+      const book = normalizeOrderBook(payloadFromResult(result));
+      if (book.bids.length === 0 || book.asks.length === 0) return null;
+      const bestBid = Math.max(...book.bids.map((b) => b.price));
+      const bestAsk = Math.min(...book.asks.map((a) => a.price));
+      if (!Number.isFinite(bestBid) || !Number.isFinite(bestAsk)) return null;
+      return (bestBid + bestAsk) / 2;
+    } catch {
+      return null;
+    }
+  }
+
+  private async withTimeout<T>(
+    promise: Promise<T>,
+    operation: string,
+    timeoutMs: number = this.requestTimeoutMs,
+  ): Promise<T> {
     const controller = new AbortController();
     let timeout: ReturnType<typeof setTimeout> | undefined;
     const timeoutPromise = new Promise<never>((_, reject) => {
       timeout = setTimeout(() => {
         controller.abort();
         reject(new Error(`Timed out while trying to ${operation}`));
-      }, this.requestTimeoutMs);
+      }, timeoutMs);
     });
     try {
       return await Promise.race([promise, timeoutPromise]);

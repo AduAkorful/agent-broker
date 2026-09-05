@@ -471,17 +471,20 @@ describe("Production Hardening — P1 Security & Observability", () => {
     expect(response.headers.get("Content-Security-Policy")).toBe("default-src 'none'");
   });
 
-  it("P1.4: health endpoint returns only { ok: true } (no service field)", async () => {
+  it("P1.4: health endpoint is liveness-only { ok, status } (no service field)", async () => {
     const app = await makeApp();
     server = await startServer(app);
 
     const response = await fetch(`${server.url}/health`);
+    expect(response.status).toBe(200);
     const body = (await response.json()) as Record<string, unknown>;
     expect(body.ok).toBe(true);
+    expect(body.status).toBe("alive");
     expect(body.service).toBeUndefined();
+    expect(body.checks).toBeUndefined();
   });
 
-  it("P2.6: returns 503 with dependency checks when MCP client is not connected", async () => {
+  it("P2.6: /api/v1/ready returns 503 when MCP client is not connected", async () => {
     paymentService = new PaymentService({ facilitator: makeMockFacilitator() });
     rateLimiter = new RateLimitStore({ config: { maxRequests: 100, windowSeconds: 60 } });
     const app = createApp({
@@ -495,11 +498,17 @@ describe("Production Hardening — P1 Security & Observability", () => {
     });
     server = await startServer(app);
 
-    const response = await fetch(`${server.url}/health`);
+    const live = await fetch(`${server.url}/health`);
+    expect(live.status).toBe(200);
+
+    const response = await fetch(`${server.url}/api/v1/ready`);
     expect(response.status).toBe(503);
-    const body = (await response.json()) as { ok: boolean; checks: Array<{ name: string; status: string }> };
-    expect(body.ok).toBe(false);
-    expect(body.checks).toContainEqual(expect.objectContaining({ name: "mcp", status: "fail" }));
+    const body = (await response.json()) as {
+      ready: boolean;
+      checks: Record<string, { ok: boolean; detail?: string }>;
+    };
+    expect(body.ready).toBe(false);
+    expect(body.checks.mcp?.ok).toBe(false);
   });
 
   it("P1.2: rate-limits by X-Forwarded-For when trustProxy is enabled", async () => {

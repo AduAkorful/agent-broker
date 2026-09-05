@@ -250,39 +250,10 @@ export function createApp(options: CreateAppOptions = {}) {
 
   app.use(express.json({ limit: "10kb" }));
 
-  app.get("/health", async (_request, response) => {
-    const checks: Array<{ name: string; status: "pass" | "fail"; error?: string }> = [];
-
-    try {
-      if (client.isConnected()) {
-        checks.push({ name: "mcp", status: "pass" });
-      } else {
-        checks.push({ name: "mcp", status: "fail", error: "MCP client is not connected" });
-      }
-    } catch (e: unknown) {
-      checks.push({ name: "mcp", status: "fail", error: e instanceof Error ? e.message : String(e) });
-    }
-
-    try {
-      const facilitatorHealthy = await paymentService.checkFacilitatorHealth();
-      checks.push({
-        name: "facilitator",
-        status: facilitatorHealthy ? "pass" : "fail",
-        error: facilitatorHealthy ? undefined : "Unreachable",
-      });
-    } catch (e: unknown) {
-      checks.push({ name: "facilitator", status: "fail", error: e instanceof Error ? e.message : String(e) });
-    }
-
-    try {
-      paymentService.getNonceStore().getNonceCount();
-      checks.push({ name: "database", status: "pass" });
-    } catch (e: unknown) {
-      checks.push({ name: "database", status: "fail", error: e instanceof Error ? e.message : String(e) });
-    }
-
-    const allHealthy = checks.every((c) => c.status === "pass");
-    response.status(allHealthy ? 200 : 503).json({ ok: allHealthy, checks });
+  // Liveness only — Render (and other hosts) probe this path. Deep dependency
+  // checks live on GET /api/v1/ready so a broken facilitator cannot block deploy.
+  app.get("/health", (_request, response) => {
+    response.status(200).json({ ok: true, status: "alive" });
   });
 
   app.get("/api/v1/ready", async (_request, response) => {
@@ -523,7 +494,7 @@ export function createApp(options: CreateAppOptions = {}) {
       ready_url: "/api/v1/ready",
       routes: {
         free: [
-          { method: "GET", path: "/health", description: "Liveness + dependency checks" },
+          { method: "GET", path: "/health", description: "Liveness probe (process up)" },
           { method: "GET", path: "/api/v1/ready", description: "Readiness: MCP + B402 facilitator" },
           { method: "GET", path: "/api/v1/agent/info", description: "Machine-readable product catalog" },
           { method: "GET", path: "/api/v1/openapi.yaml", description: "OpenAPI 3 spec (YAML)" },

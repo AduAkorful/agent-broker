@@ -1,0 +1,11 @@
+node_modules/
+dist/
+.env
+*.sqlite
+*.sqlite-*
+.DS_Store
+.codex/
+
+# Project planning & checkpoint docs
+plans/
+AGENTS.md

@@ -1,0 +1,947 @@
+openapi: 3.0.3
+info:
+  title: Agent-to-Agent Data Broker API
+  description: |
+    Binance MCP market intelligence broker with B402 micropayments.
+
+    ## x402 Payment Flow
+
+    1.  Send `GET /api/v1/market-intelligence/volatility` without a `payment-signature`
+        header. The server responds with `402 Payment Required` and a base64-encoded
+        `PAYMENT-REQUIRED` header containing the x402 V2 payment requirements.
+    2.  Sign a B402 Relayer EIP-712 `TransferWithAuthorization` (domain name `B402`,
+        `verifyingContract` = relayer; typed data includes `token`) for USDT or USDC
+        and send it as a base64-encoded `payment-signature` header.
+    3.  The server translates the x402 client envelope to the live B402 facilitator body,
+        verifies + settles via `https://facilitatorv3.b402.ai`, and serves the CVMS score
+        with a base64-encoded `PAYMENT-RESPONSE` header.
+    4.  Set `PAYMENTS_ENABLED=false` (or price atomic `0`) to skip 402 entirely; agent/info
+        then reports `payments_enabled: false` and zero prices.
+  version: "1.0.0"
+servers:
+  - url: http://localhost:3000
+    description: Local broker (development)
+  - url: http://127.0.0.1:3000
+    description: Local broker (loopback)
+paths:
+  /health:
+    get:
+      summary: Health check
+      description: |
+        Liveness and readiness probe. Returns 200 with dependency status when all
+        dependencies are healthy, or 503 when one or more checks fail.
+      operationId: getHealth
+      responses:
+        "200":
+          description: All dependencies healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+        "503":
+          description: One or more dependencies unhealthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+
+  /api/v1/ready:
+    get:
+      summary: Readiness probe
+      description: |
+        Free readiness check for MCP client connectivity and B402 facilitator
+        reachability. Does not leak secrets.
+      operationId: getReady
+      responses:
+        "200":
+          description: Ready to serve paid intelligence
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadyResponse"
+        "503":
+          description: Not ready
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadyResponse"
+
+  /api/v1/openapi.yaml:
+    get:
+      summary: OpenAPI specification (YAML)
+      operationId: getOpenApiYaml
+      responses:
+        "200":
+          description: OpenAPI 3 document
+          content:
+            application/yaml:
+              schema:
+                type: string
+
+  /docs:
+    get:
+      summary: Interactive Swagger UI (free, unauthenticated)
+      description: |
+        Interactive API documentation powered by Swagger UI, backed by the
+        OpenAPI spec at /api/v1/openapi.yaml. No payment or authentication required.
+      operationId: getSwaggerUi
+      responses:
+        "200":
+          description: Swagger UI HTML page
+          content:
+            text/html:
+              schema:
+                type: string
+
+  /api/v1/openapi.json:
+    get:
+      summary: OpenAPI specification (JSON)
+      operationId: getOpenApiJson
+      responses:
+        "200":
+          description: OpenAPI 3 document
+          content:
+            application/json:
+              schema:
+                type: object
+
+  /api/v1/market-intelligence/volatility:
+    get:
+      summary: Market intelligence (CVMS volatility score)
+      description: |
+        Returns the Composite Volatility & Momentum Score (CVMS) for a given
+        trading pair. Requires x402 payment of 0.05 USDT via the B402
+        facilitator.
+
+        **Payment flow:**
+        - Without `payment-signature`: `402` with base64 `PAYMENT-REQUIRED` header.
+        - With valid `payment-signature`: `200` with CVMS score JSON and base64
+          `PAYMENT-RESPONSE` header.
+        - If MCP fails but cached data exists: `200` with `stale: true` in the body.
+        - If MCP fails and no cache: `503` with error message.
+      operationId: getMarketIntelligence
+      parameters:
+        - name: symbol
+          in: query
+          description: "Trading pair symbol (default: BTCUSDT)"
+          required: false
+          schema:
+            type: string
+            pattern: "^[A-Za-z0-9]{3,20}$"
+            default: BTCUSDT
+        - name: interval
+          in: query
+          description: "Candle interval (default: 1h)"
+          required: false
+          schema:
+            type: string
+            pattern: "^\\d+[mhdw]$"
+            default: 1h
+        - name: limit
+          in: query
+          description: "Number of candles (default: 24, max: 1000)"
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+            default: 24
+      headers:
+        payment-signature:
+          description: |
+            Base64-encoded x402 V2 payment payload (B402 Relayer EIP-712
+            TransferWithAuthorization signature). The first request without this
+            header receives a 402 challenge.
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: CVMS score returned successfully
+          headers:
+            payment-response:
+              description: Base64-encoded x402 payment response (settle result)
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CvmsScore"
+        "402":
+          description: Payment required
+          headers:
+            payment-required:
+              description: |
+                Base64-encoded x402 V2 PaymentRequired object containing accepted
+                tokens (USDT + USDC), amounts, and nonce for replay protection.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaymentError"
+        "429":
+          description: Rate limit exceeded
+          headers:
+            retry-after:
+              description: Seconds until the rate limit window resets
+              schema:
+                type: integer
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaymentError"
+        "503":
+          description: Market data unavailable (MCP failure + no cached data)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaymentError"
+
+  /api/v1/market-intelligence/volatility/history:
+    get:
+      summary: Historical CVMS time series with provenance
+      description: |
+        Returns historical CVMS scores for a given symbol with provenance metadata.
+        Requires x402 payment at a bulk-discount rate: 0.01 USDT per record,
+        minimum 1 USDT.
+      operationId: getVolatilityHistory
+      parameters:
+        - name: symbol
+          in: query
+          description: "Trading pair symbol (default: BTCUSDT)"
+          required: false
+          schema:
+            type: string
+            pattern: "^[A-Za-z0-9]{3,20}$"
+            default: BTCUSDT
+        - name: limit
+          in: query
+          description: "Number of historical records (default: 100, min: 1, max: 1000)"
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+            default: 100
+      headers:
+        payment-signature:
+          description: Base64-encoded x402 V2 payment payload
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Historical CVMS scores
+          headers:
+            payment-response:
+              description: Base64-encoded x402 payment response
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HistoryResponse"
+        "402":
+          $ref: "#/components/responses/PaymentRequired402"
+        "429":
+          $ref: "#/components/responses/RateLimited429"
+
+  /api/v1/market-intelligence/volatility/batch:
+    post:
+      summary: Batch CVMS scores for multiple symbols
+      description: |
+        Returns CVMS scores for multiple symbols in a single request.
+        Requires x402 payment at bulk rate: 0.04 USDT per symbol.
+      operationId: getBatchVolatility
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BatchRequest"
+      headers:
+        payment-signature:
+          description: Base64-encoded x402 V2 payment payload
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Batch CVMS scores
+          headers:
+            payment-response:
+              description: Base64-encoded x402 payment response
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BatchResponse"
+        "402":
+          $ref: "#/components/responses/PaymentRequired402"
+        "429":
+          $ref: "#/components/responses/RateLimited429"
+
+  /api/v1/market-intelligence/portfolio/risk:
+    post:
+      summary: Portfolio-level risk metrics
+      description: |
+        Returns portfolio-level CVMS composite score, correlation matrix,
+        and concentration warnings for a weighted portfolio of symbols.
+        Requires x402 payment at bulk rate: 0.04 USDT per symbol.
+      operationId: getPortfolioRisk
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PortfolioRiskRequest"
+      headers:
+        payment-signature:
+          description: Base64-encoded x402 V2 payment payload
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Portfolio risk metrics
+          headers:
+            payment-response:
+              description: Base64-encoded x402 payment response
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PortfolioRiskResponse"
+        "400":
+          description: Invalid request body
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaymentError"
+        "402":
+          $ref: "#/components/responses/PaymentRequired402"
+        "429":
+          $ref: "#/components/responses/RateLimited429"
+        "503":
+          description: No market data available for any requested symbol
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaymentError"
+
+  /api/v1/agent/info:
+    get:
+      summary: Agent discovery metadata
+      description: |
+        Returns discoverable metadata about available signals, pricing,
+        and x402 payment configuration. No payment required — enables
+        bot discovery via x402 ecosystem directories.
+      operationId: getAgentInfo
+      responses:
+        "200":
+          description: Agent metadata
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentInfoResponse"
+
+  /api/v1/subscription:
+    post:
+      summary: Purchase a subscription for bulk access
+      description: |
+        Purchases a subscription that grants a fixed number of request credits
+        (default: 200 requests for 10 USDT, valid for 24 hours). Requires a
+        single x402 payment. The returned `subscription_nonce` is used in the
+        `payment-signature` header for subsequent requests to skip per-request
+        payment challenges.
+      operationId: createSubscription
+      requestBody:
+        description: Request body is ignored (payment is via x402 header)
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+      headers:
+        payment-signature:
+          description: Base64-encoded x402 V2 payment payload (must be a real payment, not a subscription nonce)
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Subscription created
+          headers:
+            payment-response:
+              description: Base64-encoded x402 payment response
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SubscriptionResponse"
+        "402":
+          $ref: "#/components/responses/PaymentRequired402"
+        "429":
+          $ref: "#/components/responses/RateLimited429"
+
+  /api/v1/treasury/withdraw:
+    post:
+      summary: Treasury withdrawal (admin only)
+      description: |
+        Withdraw funds from the treasury. Requires `ADMIN_API_KEY` to be configured
+        at startup and the `x-api-key` header to match. All four treasury controls
+        are enforced: active flag, token whitelist, withdrawal whitelist, and
+        single/daily spending limits.
+      operationId: postTreasuryWithdraw
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [amount, token, destination]
+              properties:
+                amount:
+                  type: string
+                  description: Withdrawal amount in atomic units (smallest denomination)
+                  example: "50000000000000000"
+                token:
+                  type: string
+                  description: Token contract address (must be in treasury token whitelist)
+                  pattern: "^0[xX][a-fA-F0-9]{40}$"
+                  example: "0x55d398326f99059fF775485246999027B3197955"
+                destination:
+                  type: string
+                  description: Recipient Ethereum address (must be in withdrawal whitelist)
+                  pattern: "^0[xX][a-fA-F0-9]{40}$"
+                  example: "0x0000000000000000000000000000000000000001"
+                signature:
+                  type: string
+                  description: Optional signature for on-chain withdrawal
+                  nullable: true
+      responses:
+        "200":
+          description: Withdrawal recorded and pending on-chain execution
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TreasuryWithdrawResponse"
+        "400":
+          description: Missing required fields
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaymentError"
+        "401":
+          description: Missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaymentError"
+        "403":
+          description: Withdrawal rejected by treasury controls
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TreasuryWithdrawReject"
+        "503":
+          description: Admin endpoints not configured (ADMIN_API_KEY missing)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaymentError"
+
+  /api/v1/treasury/balance:
+    get:
+      summary: Treasury configuration and balance (admin only)
+      description: |
+        Returns treasury configuration and total withdrawal count. Requires
+        `ADMIN_API_KEY` to be configured and the `x-api-key` header.
+      operationId: getTreasuryBalance
+      security:
+        - ApiKeyAuth: []
+      responses:
+        "200":
+          description: Treasury configuration and stats
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TreasuryBalanceResponse"
+        "401":
+          description: Missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaymentError"
+        "503":
+          description: Admin endpoints not configured
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaymentError"
+
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: x-api-key
+      description: |
+        Admin API key. Set via `ADMIN_API_KEY` environment variable at startup.
+        Comparison uses `crypto.timingSafeEqual` to prevent timing attacks.
+
+  responses:
+    PaymentRequired402:
+      description: Payment required
+      headers:
+        payment-required:
+          description: Base64-encoded x402 V2 PaymentRequired object
+          schema:
+            type: string
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/PaymentError"
+    RateLimited429:
+      description: Rate limit exceeded
+      headers:
+        retry-after:
+          description: Seconds until the rate limit window resets
+          schema:
+            type: integer
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/PaymentError"
+
+  schemas:
+    HealthResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+          description: Overall health status
+        checks:
+          type: array
+          description: Per-dependency health checks
+          items:
+            type: object
+            properties:
+              name:
+                type: string
+                example: mcp
+              status:
+                type: string
+                enum: [pass, fail]
+              error:
+                type: string
+                nullable: true
+                description: Error message when status is "fail"
+
+    CvmsScore:
+      type: object
+      properties:
+        symbol:
+          type: string
+          example: BTCUSDT
+        timestamp:
+          type: integer
+          description: Unix timestamp of score computation
+        volatility_score:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 100
+        momentum_score:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 100
+        composite_score:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 100
+        open_interest:
+          type: number
+          format: float
+          minimum: 0
+          description: Raw open interest value (in contracts)
+        open_interest_signal:
+          type: number
+          format: float
+          description: Same as open_interest; used in CVMS scoring (not a funding rate)
+        funding_rate:
+          type: number
+          format: float
+          nullable: true
+          description: Present only when a real funding-rate MCP tool returned data
+        order_book_imbalance:
+          type: number
+          format: float
+          minimum: -1
+          maximum: 1
+        realized_volatility_24h:
+          type: number
+          format: float
+        data_ttl_seconds:
+          type: integer
+          example: 30
+        stale:
+          type: boolean
+          nullable: true
+          description: Present and true when served from stale cache
+        sources:
+          type: array
+          description: MCP tools that contributed to this score
+          items:
+            type: string
+            enum: [ticker, klines, orderBook, openInterest, fundingRate]
+          example: ["ticker", "klines", "orderBook"]
+        data_age_ms:
+          type: integer
+          description: Milliseconds since the underlying snapshot was fetched
+          example: 1500
+        confidence_score:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 100
+          description: Confidence derived from data freshness + field completeness
+        age:
+          type: integer
+          description: Alias of data_age_ms
+        disclaimer:
+          type: string
+        contrast:
+          $ref: "#/components/schemas/VenueContrast"
+
+    PaymentError:
+      type: object
+      properties:
+        error:
+          type: string
+          example: "Payment required"
+
+    TreasuryWithdrawResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          example: pending
+        amount:
+          type: string
+          example: "50000000000000000"
+        token:
+          type: string
+          example: "0x55d398326f99059fF775485246999027B3197955"
+        destination:
+          type: string
+          example: "0x0000000000000000000000000000000000000001"
+        daily_spent:
+          type: string
+          description: Total atomic units spent today for this token
+
+    TreasuryWithdrawReject:
+      type: object
+      properties:
+        error:
+          type: string
+          example: "Withdrawal rejected"
+        reason:
+          type: string
+          example: "exceeds_daily_limit"
+        message:
+          type: string
+          example: "Amount would exceed daily limit"
+
+    TreasuryBalanceResponse:
+      type: object
+      properties:
+        active:
+          type: boolean
+          description: Whether treasury withdrawals are active
+        daily_limit_atomic:
+          type: string
+        single_limit_atomic:
+          type: string
+        withdrawal_whitelist:
+          type: array
+          items:
+            type: string
+        token_whitelist:
+          type: array
+          items:
+            type: string
+      total_withdrawals:
+        type: integer
+
+    HistoryResponse:
+      type: object
+      properties:
+        symbol:
+          type: string
+          example: BTCUSDT
+        count:
+          type: integer
+          description: Number of historical records returned
+        scores:
+          type: array
+          items:
+            $ref: "#/components/schemas/CvmsScore"
+
+    BatchRequest:
+      type: object
+      required: [symbols]
+      properties:
+        symbols:
+          type: array
+          description: Trading pair symbols to score
+          items:
+            type: string
+            pattern: "^[A-Za-z0-9]{3,20}$"
+          minItems: 1
+          maxItems: 100
+          example: ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
+        interval:
+          type: string
+          pattern: "^\\d+[mhdw]$"
+          default: 1h
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 1000
+          default: 24
+
+    BatchResponse:
+      type: object
+      properties:
+        count:
+          type: integer
+          description: Number of scores returned (may be less than requested if some symbols failed)
+        scores:
+          type: array
+          items:
+            $ref: "#/components/schemas/CvmsScore"
+
+    PortfolioRiskRequest:
+      type: object
+      required: [symbols, weights]
+      properties:
+        symbols:
+          type: array
+          items:
+            type: string
+            pattern: "^[A-Za-z0-9]{3,20}$"
+          minItems: 1
+          maxItems: 100
+        weights:
+          type: array
+          description: Portfolio weights (must sum reasonably; will be normalized)
+          items:
+            type: number
+            minimum: 0
+          minItems: 1
+          maxItems: 100
+        interval:
+          type: string
+          pattern: "^\\d+[mhdw]$"
+          default: 1h
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 1000
+          default: 24
+
+    PortfolioRiskResponse:
+      type: object
+      properties:
+        portfolio:
+          $ref: "#/components/schemas/CvmsScore"
+        symbols:
+          type: array
+          items:
+            type: string
+          description: Symbols for which market data was successfully retrieved
+        weights:
+          type: array
+          items:
+            type: number
+          description: Normalized weights (sum to 1) for valid symbols only
+        correlation_matrix:
+          type: array
+          description: NxN Pearson correlation matrix of price returns (N = valid symbols)
+          items:
+            type: array
+            items:
+              type: number
+              minimum: -1
+              maximum: 1
+        concentration_warnings:
+          type: array
+          items:
+            type: object
+            properties:
+              symbol:
+                type: string
+              weight:
+                type: number
+              message:
+                type: string
+        diversification_headroom:
+          type: object
+          properties:
+            current_diversified_positions:
+              type: integer
+            recommended_minimum:
+              type: integer
+              example: 10
+            headroom:
+              type: integer
+
+    AgentInfoResponse:
+      type: object
+      properties:
+        name:
+          type: string
+          example: agent-to-agent-data-broker
+        version:
+          type: string
+        product:
+          type: string
+        description:
+          type: string
+        disclaimer:
+          type: string
+        openapi_url:
+          type: string
+        ready_url:
+          type: string
+        routes:
+          type: object
+        networks:
+          type: object
+        assets:
+          type: array
+          items:
+            type: object
+        how_to_pay:
+          type: object
+        secondary_venue:
+          type: object
+        signals:
+          type: array
+          items:
+            type: object
+            properties:
+              name:
+                type: string
+              endpoint:
+                type: string
+              price_atomic:
+                type: string
+                description: "Atomic amount per request, or 'variable' for bulk/discount pricing"
+              price_detail:
+                type: string
+                nullable: true
+              description:
+                type: string
+        payment:
+          type: object
+          properties:
+            accepts:
+              type: array
+              items:
+                type: string
+              example: ["USDT", "USDC"]
+            network:
+              type: string
+              example: eip155:56
+            payTo:
+              type: string
+            scheme:
+              type: string
+              example: b402-relayer
+            subscription:
+              type: object
+              properties:
+                price_atomic:
+                  type: string
+                requests_included:
+                  type: integer
+                ttl_seconds:
+                  type: integer
+                endpoint:
+                  type: string
+
+    SubscriptionResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          example: active
+        subscription_nonce:
+          type: string
+          description: Use this nonce in the payment-signature header to access protected endpoints
+        initial_balance:
+          type: integer
+          example: 200
+        remaining_balance:
+          type: integer
+          example: 200
+        expires_at:
+          type: integer
+          description: Unix timestamp (ms) when the subscription expires
+        network:
+          type: string
+          example: eip155:56
+
+    ReadyResponse:
+      type: object
+      properties:
+        ready:
+          type: boolean
+        checked_at:
+          type: integer
+        checks:
+          type: object
+          additionalProperties:
+            type: object
+            properties:
+              ok:
+                type: boolean
+              detail:
+                type: string
+
+    VenueContrast:
+      type: object
+      properties:
+        venue:
+          type: string
+        symbol:
+          type: string
+        mid:
+          type: number
+          nullable: true
+        last:
+          type: number
+          nullable: true
+        binance_mid:
+          type: number
+          nullable: true
+        basis_bps:
+          type: number
+          nullable: true
+        available:
+          type: boolean
+        error:
+          type: string
+          nullable: true
+        fetched_at:
+          type: integer

@@ -114,8 +114,10 @@ COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/docs ./docs
 EXPOSE 3000
-CMD ["node", "dist/index.js"]
+CMD ["node", "dist/src/index.js"]
 ```
+
+A `render.yaml` is included for Render.com Docker deploy (free tier). On free tier the filesystem is ephemeral, so prefer `DATABASE_PATH=:memory:` (or accept SQLite data loss on restart).
 
 ### Production env
 

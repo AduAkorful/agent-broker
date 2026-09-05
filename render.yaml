@@ -1,0 +1,20 @@
+services:
+  - type: web
+    name: agent-broker
+    runtime: docker
+    plan: free
+    region: oregon
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PAYMENTS_ENABLED
+        value: "false"
+      - key: TRUST_PROXY
+        value: "true"
+      - key: DATABASE_PATH
+        value: ":memory:"
+      - key: ADMIN_API_KEY
+        sync: false
+      - key: BINANCE_MCP_AUTH_TOKEN
+        sync: false

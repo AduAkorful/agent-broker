@@ -1,0 +1,17 @@
+node_modules
+dist
+.git
+.env
+.env.*
+!.env.example
+*.sqlite
+*.sqlite-*
+.DS_Store
+.codex
+.commandcode
+plans
+AGENTS.md
+coverage
+tests
+scripts
+.github

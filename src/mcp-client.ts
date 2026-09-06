@@ -516,35 +516,40 @@ export class BinanceMcpClient {
   }
 
   /**
-   * Futures order-book midpoint via the MCP relay (agent.binance.com), used for
-   * the spot-vs-futures venue contrast. Looks up a Binance futures order-book
-   * tool (e.g. `futures_depth` / `binance.futures.depth`) by name so that no
-   * direct `fapi.binance.com` REST egress is required. Returns `null` when no
-   * such tool exists or the call fails.
+   * Futures mid via the MCP relay (agent.binance.com), used for spot-vs-futures
+   * venue contrast. Prefers `futures_usds.symbolPriceTicker` (USDT-M). The MCP
+   * catalog exposes futures price tickers but not futures depth/order-book
+   * tools (only `spot.depth`), so depth-based mid resolution always failed.
+   * Returns `null` when no suitable tool exists or the call fails.
    */
   async getFuturesMid(symbol: string, timeoutMs: number): Promise<number | null> {
     if (!/^[A-Za-z0-9]{3,20}$/.test(symbol)) return null;
     if (!this.connected) await this.connect();
     await this.ensureMarketToolsDiscovered();
 
-    const tool = this.tools
-      .filter((t) => /(futures|perp|derivatives?)/i.test(t.name))
-      .filter((t) => /(order[_-]?book|depth)/i.test(t.name))
-      .sort((a, b) => toolScore(b, "orderBook") - toolScore(a, "orderBook"))[0];
+    const tool =
+      this.tools.find((t) => t.name === "futures_usds.symbolPriceTicker") ??
+      this.tools
+        .filter((t) => /(futures_usds|futures|perp)/i.test(t.name))
+        .filter((t) => /symbolPriceTicker|priceTicker|tickerPrice|(^|[._-])ticker$/i.test(t.name))
+        .filter((t) => !/(kline|candle|markPriceKline|indexPriceKline|premiumIndex)/i.test(t.name))
+        .sort((a, b) => {
+          const rank = (n: string) =>
+            (n.includes("futures_usds") ? 2 : 0) + (n.includes("symbolPriceTicker") ? 2 : 0);
+          return rank(b.name) - rank(a.name);
+        })[0];
     if (!tool) return null;
 
     try {
       const result = await this.withTimeout(
         this.client.callTool({ name: tool.name, arguments: { symbol } }),
-        `fetch futures order book for ${symbol}`,
+        `fetch futures price ticker for ${symbol}`,
         timeoutMs,
       );
-      const book = normalizeOrderBook(payloadFromResult(result));
-      if (book.bids.length === 0 || book.asks.length === 0) return null;
-      const bestBid = Math.max(...book.bids.map((b) => b.price));
-      const bestAsk = Math.min(...book.asks.map((a) => a.price));
-      if (!Number.isFinite(bestBid) || !Number.isFinite(bestAsk)) return null;
-      return (bestBid + bestAsk) / 2;
+      const payload = unwrapData(payloadFromResult(result));
+      const row = Array.isArray(payload) ? asRecord(payload[0]) : asRecord(payload);
+      const price = numberValue(row.price ?? row.lastPrice ?? row.markPrice ?? row.indexPrice);
+      return price !== undefined && price > 0 ? price : null;
     } catch {
       return null;
     }

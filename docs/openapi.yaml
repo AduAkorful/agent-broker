@@ -25,20 +25,15 @@ servers:
 paths:
   /health:
     get:
-      summary: Health check
+      summary: Liveness probe
       description: |
-        Liveness and readiness probe. Returns 200 with dependency status when all
-        dependencies are healthy, or 503 when one or more checks fail.
+        Liveness probe for host platforms. Returns 200 with process status.
+        Deep dependency readiness checks (MCP client connectivity and B402
+        facilitator reachability) are served on `GET /api/v1/ready`.
       operationId: getHealth
       responses:
         "200":
-          description: All dependencies healthy
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/HealthResponse"
-        "503":
-          description: One or more dependencies unhealthy
+          description: Service process is alive
           content:
             application/json:
               schema:
@@ -525,23 +520,12 @@ components:
       properties:
         ok:
           type: boolean
-          description: Overall health status
-        checks:
-          type: array
-          description: Per-dependency health checks
-          items:
-            type: object
-            properties:
-              name:
-                type: string
-                example: mcp
-              status:
-                type: string
-                enum: [pass, fail]
-              error:
-                type: string
-                nullable: true
-                description: Error message when status is "fail"
+          description: Overall liveness status
+          example: true
+        status:
+          type: string
+          description: Process liveness status
+          example: alive
 
     CvmsScore:
       type: object
@@ -678,8 +662,8 @@ components:
           type: array
           items:
             type: string
-      total_withdrawals:
-        type: integer
+        total_withdrawals:
+          type: integer
 
     HistoryResponse:
       type: object
@@ -694,6 +678,8 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/CvmsScore"
+        disclaimer:
+          type: string
 
     BatchRequest:
       type: object
@@ -728,6 +714,8 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/CvmsScore"
+        disclaimer:
+          type: string
 
     PortfolioRiskRequest:
       type: object
@@ -782,6 +770,9 @@ components:
               type: number
               minimum: -1
               maximum: 1
+        correlation_basis:
+          type: string
+          example: log_returns
         concentration_warnings:
           type: array
           items:
@@ -803,6 +794,8 @@ components:
               example: 10
             headroom:
               type: integer
+        disclaimer:
+          type: string
 
     AgentInfoResponse:
       type: object

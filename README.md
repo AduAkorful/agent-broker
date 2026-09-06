@@ -105,7 +105,7 @@ Each score includes provenance: `sources`, `data_age_ms`, `confidence_score` (fr
 
 | Route                      | Purpose                                                      |
 | -------------------------- | ------------------------------------------------------------ |
-| GET `/health`              | Liveness + dependency checks (MCP, facilitator, DB)          |
+| GET `/health`              | Liveness probe (process up)                                  |
 | GET `/api/v1/ready`        | Readiness: MCP connection + B402 facilitator reachability    |
 | GET `/api/v1/agent/info`   | Machine-readable product catalog (pricing, payment metadata) |
 | GET `/api/v1/openapi.yaml` | OpenAPI 3 spec (YAML)                                        |

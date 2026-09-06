@@ -134,10 +134,8 @@ export CORS_ORIGINS=https://your-frontend.com
 
 ```mermaid
 graph TD
-  subgraph "Health checks"
-    A[GET /health] --> B[MCP client.isConnected]
-    A --> C[B402 Facilitator /api/v1/health]
-    A --> D[SQLite nonce count]
+  subgraph "Liveness"
+    A[GET /health] --> B[Process up: 200 { ok: true, status: alive }]
   end
   subgraph "Readiness"
     E[GET /api/v1/ready] --> F[MCP connection]
@@ -151,11 +149,11 @@ graph TD
   end
 ```
 
-| Probe           | URL                      | Healthy response                  | Unhealthy response                 |
-| --------------- | ------------------------ | --------------------------------- | ---------------------------------- |
-| Liveness        | `GET /health`            | 200 `{ ok: true, checks: [...] }` | 503 `{ ok: false, checks: [...] }` |
-| Readiness       | `GET /api/v1/ready`      | 200 `{ ready: true, checks: {} }` | 503 `{ ready: false, checks: {} }` |
-| Product catalog | `GET /api/v1/agent/info` | 200 product info JSON             | n/a (always available)             |
+| Probe           | URL                      | Healthy response                    | Unhealthy response                 |
+| --------------- | ------------------------ | ----------------------------------- | ---------------------------------- |
+| Liveness        | `GET /health`            | 200 `{ ok: true, status: "alive" }` | Process exit / crash               |
+| Readiness       | `GET /api/v1/ready`      | 200 `{ ready: true, checks: {} }`   | 503 `{ ready: false, checks: {} }` |
+| Product catalog | `GET /api/v1/agent/info` | 200 product info JSON               | n/a (always available)             |
 
 ## CI/CD
 
@@ -202,14 +200,14 @@ graph TD
 
 ### MCP connection fails
 
-1. Check `GET /health` — MCP check shows `"fail", "MCP client is not connected"`
+1. Check `GET /api/v1/ready` — MCP check shows `{"ok": false, "detail": "not_connected"}`
 2. Verify `BINANCE_MCP_AUTH_TOKEN` is set and valid
 3. Check Binance MCP endpoint availability at `https://agent.binance.com/mcp/agentic`
 4. Paid routes will serve stale cached data (if available) or return 503
 
 ### Payment verification fails
 
-1. Check facilitator health: `GET /health` shows facilitator status
+1. Check facilitator health: `GET /api/v1/ready` shows facilitator check status
 2. Verify `B402_PAY_TO` matches the `payTo` in the client's payment payload
 3. Verify `B402_RELAYER` matches the relayer contract
 4. Check that the payment signature is valid EIP-712 `TransferWithAuthorization`

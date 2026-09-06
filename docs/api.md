@@ -8,41 +8,14 @@ All free routes are unauthenticated and return immediately without payment check
 
 ### GET `/health`
 
-Liveness + dependency checks.
-
-```mermaid
-graph LR
-  A[GET /health] --> B[MCP client.isConnected?]
-  B --> C[B402 Facilitator /api/v1/health?]
-  C --> D[SQLite nonce count?]
-  D --> E{all pass?}
-  E -->|yes| F["200 { ok: true, checks: [...] }"]
-  E -->|no| G["503 { ok: false, checks: [...] }"]
-```
+Liveness probe for host platforms. Returns immediately with process status. Deep dependency checks are served on `GET /api/v1/ready`.
 
 **Response 200:**
 
 ```json
 {
   "ok": true,
-  "checks": [
-    { "name": "mcp", "status": "pass" },
-    { "name": "facilitator", "status": "pass" },
-    { "name": "database", "status": "pass" }
-  ]
-}
-```
-
-**Response 503** (one or more checks failed):
-
-```json
-{
-  "ok": false,
-  "checks": [
-    { "name": "mcp", "status": "fail", "error": "MCP client is not connected" },
-    { "name": "facilitator", "status": "pass" },
-    { "name": "database", "status": "pass" }
-  ]
+  "status": "alive"
 }
 ```
 

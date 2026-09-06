@@ -184,18 +184,18 @@ The server handles `SIGTERM` and `SIGINT`:
 
 ```mermaid
 graph TD
-    A[SIGTERM / SIGINT] --> B[Stop nonce cleanup interval]
-    B --> C[Stop subscription cleanup interval]
-    B --> D[Stop history cleanup interval]
-    C --> E[Close HTTP server]
+    A["SIGTERM / SIGINT"] --> B["Stop nonce cleanup interval"]
+    B --> C["Stop subscription cleanup interval"]
+    B --> D["Stop history cleanup interval"]
+    C --> E["Close HTTP server"]
     D --> E
-    E --> F[Close MCP client]
-    F --> G[Close PaymentService<br/>NonceStore + SubscriptionStore]
-    G --> H[Close RateLimitStore]
-    H --> I[Close TreasuryService]
-    I --> J[Close ScoreHistoryStore]
-    J --> K[process.exit 0]
-    K -->|10s timeout| L[process.exit 1 (force)]
+    E --> F["Close MCP client"]
+    F --> G["Close PaymentService<br/>NonceStore + SubscriptionStore"]
+    G --> H["Close RateLimitStore"]
+    H --> I["Close TreasuryService"]
+    I --> J["Close ScoreHistoryStore"]
+    J --> K["process.exit 0"]
+    K -->|"10s timeout"| L["process.exit 1 (force)"]
 ```
 
 ## Runbooks

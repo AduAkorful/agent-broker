@@ -15,16 +15,13 @@ info:
     3.  The server translates the x402 client envelope to the live B402 facilitator body,
         verifies + settles via `https://facilitatorv3.b402.ai`, and serves the CVMS score
         with a base64-encoded `PAYMENT-RESPONSE` header.
-    4.  Set `PAYMENTS_ENABLED=false` (or price atomic `0`) to skip 402 entirely; agent/info
-        then reports `payments_enabled: false` and zero prices.
+    4.  Informational: If payments are disabled on the server (`PAYMENTS_ENABLED=false`
+        or atomic price `0`), the 402 challenge is skipped entirely; `GET /api/v1/agent/info`
+        reports `payments_enabled: false` and zero prices.
   version: "1.0.0"
 servers:
   - url: /
-    description: This deployment (same origin as /docs)
-  - url: http://localhost:3000
-    description: Local broker (development)
-  - url: http://127.0.0.1:3000
-    description: Local broker (loopback)
+    description: Current agent-broker deployment
 paths:
   /health:
     get:

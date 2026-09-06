@@ -278,32 +278,30 @@ describe("BinanceMcpClient", () => {
     });
   });
 
-  it("resolves futures order-book midpoint via MCP relay futures_depth", async () => {
-    const fake = new FakeMcpClient([{ name: "futures_depth" }], {
-      futures_depth: {
-        structuredContent: {
-          bids: [
-            ["51000", "2"],
-            ["50999", "1"],
-          ],
-          asks: [["51010", "3"]],
-        },
+  it("resolves futures mid via MCP relay futures_usds.symbolPriceTicker", async () => {
+    const fake = new FakeMcpClient([{ name: "futures_usds.symbolPriceTicker" }], {
+      "futures_usds.symbolPriceTicker": {
+        structuredContent: { price: "51005.0", symbol: "BTCUSDT", time: 1 },
       },
     });
     const client = new BinanceMcpClient({ clientFactory: () => fake, requestTimeoutMs: 1000 });
     const mid = await client.getFuturesMid("BTCUSDT", 2000);
     expect(mid).toBe(51005);
-    expect(fake.calls).toEqual(expect.arrayContaining([{ name: "futures_depth", arguments: { symbol: "BTCUSDT" } }]));
+    expect(fake.calls).toEqual(
+      expect.arrayContaining([{ name: "futures_usds.symbolPriceTicker", arguments: { symbol: "BTCUSDT" } }]),
+    );
   });
 
-  it("returns null when no futures order-book tool is available", async () => {
-    const fake = new FakeMcpClient([{ name: "spot_ticker" }], {});
+  it("returns null when no futures price ticker tool is available", async () => {
+    const fake = new FakeMcpClient([{ name: "spot.ticker" }, { name: "spot.depth" }], {});
     const client = new BinanceMcpClient({ clientFactory: () => fake, requestTimeoutMs: 1000 });
     expect(await client.getFuturesMid("BTCUSDT", 1000)).toBeNull();
   });
 
-  it("returns null when the futures order-book call fails", async () => {
-    const fake = new FakeMcpClient([{ name: "futures_depth" }], { futures_depth: { isError: true } });
+  it("returns null when the futures price ticker call fails", async () => {
+    const fake = new FakeMcpClient([{ name: "futures_usds.symbolPriceTicker" }], {
+      "futures_usds.symbolPriceTicker": { isError: true },
+    });
     const client = new BinanceMcpClient({ clientFactory: () => fake, requestTimeoutMs: 1000 });
     expect(await client.getFuturesMid("BTCUSDT", 1000)).toBeNull();
   });

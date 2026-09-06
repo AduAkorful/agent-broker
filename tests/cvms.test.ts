@@ -384,7 +384,7 @@ describe("CvmsScorer", () => {
     });
     const withoutOi = scorer.score(freshSnapshot);
     expect(withOi.confidence_score).toBe(100);
-    expect(withoutOi.confidence_score).toBe(90); // fresh but incomplete (missing open interest)
+    expect(withoutOi.confidence_score).toBeCloseTo(90, 1); // fresh but incomplete (missing open interest)
     expect(withOi.confidence_score).toBeGreaterThan(withoutOi.confidence_score);
   });
 

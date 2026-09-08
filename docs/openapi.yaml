@@ -728,6 +728,7 @@ components:
             pattern: "^[A-Za-z0-9]{3,20}$"
           minItems: 1
           maxItems: 100
+          example: ["BTCUSDT", "ETHUSDT"]
         weights:
           type: array
           description: Portfolio weights (must sum reasonably; will be normalized)
@@ -736,6 +737,7 @@ components:
             minimum: 0
           minItems: 1
           maxItems: 100
+          example: [0.6, 0.4]
         interval:
           type: string
           pattern: "^\\d+[mhdw]$"

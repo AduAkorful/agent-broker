@@ -1,7 +1,5 @@
 # Agent Broker
 
-[![CI](https://github.com/OWNER/REPO/actions/workflows/ci.yml/badge.svg)](https://github.com/OWNER/REPO/actions/workflows/ci.yml)
-
 HTTP **market-intelligence broker** for trading agents. Ingests market signals via Binance MCP, computes Composite Volatility & Momentum Scores (CVMS), and sells structured intelligence to other agents via HTTP 402 / B402 micropayments on BNB Chain.
 
 ## Who it is for
